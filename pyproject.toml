@@ -2,6 +2,9 @@
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+packages = ["torchtune_config_writer"]
+
 [project]
 name = "torchtune-config-writer"
 version = "0.1.0"
@@ -26,6 +29,7 @@ classifiers = [
 # Core dependencies - what users need to run the tool
 dependencies = [
     "torchtune>=0.3.0,<1.0.0",
+    "torchao>=0.14.0",
     "pyyaml>=6.0,<7.0",
 ]
 
