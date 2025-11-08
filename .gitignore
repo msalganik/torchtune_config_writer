@@ -1,0 +1,41 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Temporary files and experiments
+test_config.yaml
+sample.yaml
+scratch/
+*.tmp
+
+# Optional torchtune reference clone
+torchtune_reference/
+
+# OS files
+.DS_Store
+Thumbs.db
