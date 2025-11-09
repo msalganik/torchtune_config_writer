@@ -169,6 +169,8 @@ result = {"batch_size": 2.0}  ✓
 
 ### Deleting Keys
 
+**Phase**: Phase 2 (deferred from Phase 1 MVP)
+
 Use explicit `delete()` method:
 
 ```python
@@ -339,8 +341,9 @@ class TorchtuneConfigBuilder:
         self._operations.append(("override", updates))
         return self
 
+    # Phase 2: delete() method
     def delete(self, path: str) -> 'TorchtuneConfigBuilder':
-        """Delete key by path. Validates path format."""
+        """Delete key by path. Validates path format. (Phase 2)"""
         if not isinstance(path, str):
             raise TypeError(f"delete() requires str, got {type(path).__name__}")
         if not path or ".." in path or path.startswith(".") or path.endswith("."):
@@ -356,12 +359,13 @@ class TorchtuneConfigBuilder:
             if op_type == "override":
                 config = deep_merge(config, op_data)
             elif op_type == "delete":
-                self._delete_path(config, op_data)
+                self._delete_path(config, op_data)  # Phase 2
 
         return config
 
+    # Phase 2: delete path helper
     def _delete_path(self, config: Dict, path: str) -> None:
-        """Delete nested key by dot-separated path."""
+        """Delete nested key by dot-separated path. (Phase 2)"""
         parts = path.split('.')
         current = config
 

@@ -1,6 +1,6 @@
 # Torchtune Config Writer - Technical Specification
 
-**Version**: 0.1.0
+**Version**: 0.2.0
 **Status**: 🚧 In Development - Phase 1 (Core Builder MVP)
 **Last Updated**: 2025-01-09
 
@@ -10,14 +10,14 @@
 
 **What**: A Python tool for generating torchtune YAML configuration files programmatically from existing recipes with customizations.
 
-**Why**: Researchers need repeatable, testable config generation for fine-tuning experiments without manual YAML editing.
+**Why**: Researchers running SLURM-based training jobs need repeatable, testable config generation for parameter sweeps without manual YAML editing.
 
 **How**:
-- Start from torchtune's 100+ proven recipe configs
+- Start from torchtune's 100+ proven recipe configs (already optimized for A100-80GB)
 - Modify via Python builder API with type-safe deep merge
-- Separate scientific parameters (what to learn) from engineering parameters (GPU efficiency)
+- Generate multiple configs for parameter sweeps (submit to SLURM queue)
 - Track provenance via metadata for reproducibility
-- Validate with torchtune's authoritative `tune validate`
+- Validate with torchtune's authoritative `tune validate` (catch errors before queue submission)
 
 **Current Status**: Designing Phase 1 (Core Builder). See [Implementation Plan](#implementation-plan) for roadmap.
 
@@ -30,42 +30,61 @@
 3. [Core Design Decisions](#core-design-decisions)
 4. [Architecture Overview](#architecture-overview)
 5. [Usage Patterns](#usage-patterns)
-6. [Implementation Plan](#implementation-plan)
-7. [File Structure & Dependencies](#file-structure--dependencies)
-8. [Success Criteria](#success-criteria)
-9. [Future Extensions](#future-extensions)
+6. [SLURM Integration](#slurm-integration)
+7. [Implementation Plan](#implementation-plan)
+8. [File Structure & Dependencies](#file-structure--dependencies)
+9. [Success Criteria](#success-criteria)
 10. [Appendices Index](#appendices-index)
 
 ---
 
 ## Project Goal
 
-Build a tool for generating torchtune configuration files in a repeatable, testable manner. Users specify their experiment parameters, and the tool generates valid torchtune YAML configs based on torchtune's existing recipe configs.
+Build a tool for generating torchtune configuration files for SLURM-based training jobs in a repeatable, testable manner. Users specify their experiment parameters, and the tool generates valid torchtune YAML configs based on torchtune's existing recipe configs.
+
+**Key differentiator**: Batch generation for parameter sweeps. Generate and validate 100 configs in seconds, then submit to SLURM queue.
 
 ## Target Use Case
 
-**Primary User**: Researchers running fine-tuning experiments who need to:
-- Start from proven torchtune recipe configs
-- Customize specific parameters (datasets, hyperparameters, model sizes)
-- Generate multiple configs for parameter sweeps
+**Primary User**: Researchers running fine-tuning experiments on SLURM clusters who need to:
+- Start from proven torchtune recipe configs (already GPU-optimized)
+- Generate multiple configs for parameter sweeps efficiently
+- Validate configs before submitting to queue (avoid wasting allocation time)
 - Track changes from baseline for reproducibility
-- Validate configs before running expensive training jobs
+- Adapt configs for different GPU types when needed
+
+**Primary Environment**: SLURM cluster with GPU nodes
+- Jobs submitted via `sbatch` scripts
+- GPU type explicit in SLURM allocation (`#SBATCH --gres=gpu:a100:1`)
+- Cannot iterate quickly (queue wait times)
+- Want configs that work first try (OOM wastes precious allocation time)
 
 **Example Workflow**:
 ```python
-# Experiment 1: baseline
-builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
-builder.with_dataset("data/my_data.json")
-builder.with_output_dir("results/exp_001")
-builder.save("configs/exp_001.yaml")
-builder.validate()
+# Generate sweep of 16 configs in seconds
+import itertools
 
-# Experiment 2: higher learning rate
-builder2 = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
-builder2.with_dataset("data/my_data.json")
-builder2.with_learning_rate(1e-3)
-builder2.save("configs/exp_002.yaml")
+learning_rates = [1e-4, 3e-4, 5e-4, 1e-3]
+lora_ranks = [8, 16, 32, 64]
+
+for lr, rank in itertools.product(learning_rates, lora_ranks):
+    builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
+    builder.with_learning_rate(lr)
+    builder.with_lora_params(rank, rank * 2)
+    builder.with_dataset("data/my_data.json")
+    builder.with_output_dir(f"results/lr_{lr}_rank_{rank}")
+    builder.save(f"configs/lr_{lr}_rank_{rank}.yaml")
+    builder.validate()  # Catch errors before submitting to queue!
+
+# Submit all 16 jobs to SLURM
+# sbatch --array=0-15 run_sweep.sh
 ```
+
+**Why this matters for SLURM**:
+- ✅ Generate many configs quickly (not manually editing YAML)
+- ✅ Validate before queue submission (catch errors early)
+- ✅ Reproducible (metadata tracks what changed)
+- ✅ GPU settings from torchtune configs already work (no tuning needed)
 
 ---
 
@@ -81,14 +100,16 @@ builder2.save("configs/exp_002.yaml")
 ### 2. Base Strategy
 **Decision**: Start from torchtune's existing recipe configs, allow customization
 
-**Rationale**: Torchtune ships 100+ proven configs maintained by their team. Don't reinvent the wheel (Practical principle). Our value-add is programmatic generation + change tracking.
+**Rationale**: Torchtune ships 100+ proven configs maintained by their team, already optimized for common GPUs (A100-80GB). Don't reinvent the wheel (Practical principle). Our value-add is programmatic generation + change tracking for SLURM parameter sweeps.
+
+**Key insight**: Torchtune's shipped configs have good batch_size, dtype, and checkpointing defaults. Users can manually adjust once if using different GPU, then generate sweep from that base.
 
 ---
 
 ### 3. Validation Strategy
 **Decision**: Use torchtune's `tune validate` command exclusively
 
-**Rationale**: Authoritative validation from torchtune, checks YAML structure and component instantiation, single source of truth (Scientific principle), no redundant validation layer to maintain.
+**Rationale**: Authoritative validation from torchtune, checks YAML structure and component instantiation, single source of truth (Scientific principle), no redundant validation layer to maintain. **Critical for SLURM**: catch config errors before submitting to queue.
 
 ---
 
@@ -113,9 +134,11 @@ builder2.save("configs/exp_002.yaml")
 
 **Loading methods:**
 1. `TorchtuneConfigBuilder(name)` - From torchtune's shipped configs via `tune cp`
-2. `from_file(path)` - From user's existing YAML files
+2. `from_file(path)` - From user's existing YAML files (e.g., GPU-adapted base config)
 3. `from_dict(config)` - From dict for programmatic creation
 4. `from_previous(path)` - From previously generated config with metadata
+
+**SLURM workflow**: Load from torchtune config OR custom GPU-adapted base, then generate parameter sweep.
 
 ---
 
@@ -128,34 +151,13 @@ builder2.save("configs/exp_002.yaml")
 ```yaml
 source_type: "torchtune_shipped"
 base_config: "llama3_1/8B_lora_single_device"
-tool_version: "0.1.0"
+tool_version: "0.2.0"
 torchtune_version: "0.6.1"
-generated_at: "2025-01-08T14:30:00Z"
+generated_at: "2025-01-09T14:30:00Z"
 overrides:
   optimizer:
     lr: 0.001
 ```
-
----
-
-### 7. Scientific vs Engineering Parameters
-**Decision**: Separate scientific decisions (what to learn) from engineering decisions (how to fit in memory)
-
-**Rationale**: Researchers should focus on science, not GPU memory tuning. See [Appendix F](appendices/F_gpu_efficiency.md) for GPU helper specification.
-
-**Scientific parameters** (affect experiment outcomes):
-- Learning rate, epochs, weight decay, gradient accumulation
-- Model architecture (LoRA rank, alpha, dropout)
-- Data and loss configuration
-- LR scheduling and optimizer settings
-
-**Engineering parameters** (affect resources, not results):
-- Batch size (GPU memory constraint)
-- Activation checkpointing (memory/compute tradeoff)
-- Device, dtype, compilation (hardware-specific)
-- Output directories, logging, profiling
-
-**Implementation**: Separate `GPUEfficiencyHelper` class manages engineering params and learns optimal settings over time (Self Improving principle).
 
 ---
 
@@ -166,12 +168,12 @@ overrides:
 ```
 ┌─────────────────────────────────────────────────┐
 │          TorchtuneConfigBuilder                 │
-│  (Scientific Parameters & Config Generation)    │
+│      (Config Generation for SLURM Jobs)         │
 │                                                 │
 │  ┌──────────────────────────────────────────┐  │
 │  │  Load Base Config                        │  │
 │  │  - tune cp (torchtune shipped)           │  │
-│  │  - from_file (user YAML)                 │  │
+│  │  - from_file (GPU-adapted base)          │  │
 │  │  - from_dict (programmatic)              │  │
 │  │  - from_previous (with metadata)         │  │
 │  └──────────────────────────────────────────┘  │
@@ -190,32 +192,11 @@ overrides:
 │  │  - validate() → tune validate            │  │
 │  └──────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────┐
-│          GPUEfficiencyHelper                    │
-│  (Engineering Parameters & Self-Improving)      │
-│                                                 │
-│  ┌──────────────────────────────────────────┐  │
-│  │  Suggest Config                          │  │
-│  │  - Bootstrap: heuristics                 │  │
-│  │  - Learning: historical data             │  │
-│  │  - Strategy: conservative/balanced/...   │  │
-│  └──────────────────────────────────────────┘  │
-│                    ↓                            │
-│  ┌──────────────────────────────────────────┐  │
-│  │  Learn from Runs                         │  │
-│  │  - log_run_result()                      │  │
-│  │  - parse_torchtune_log()                 │  │
-│  │  - Improve over time                     │  │
-│  └──────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────┘
 ```
 
-### Core Classes
+### Core Class: TorchtuneConfigBuilder
 
-#### TorchtuneConfigBuilder
-
-Primary API for config generation. Handles scientific parameters.
+Primary API for config generation. Single-component architecture.
 
 **Key methods**:
 ```python
@@ -228,11 +209,16 @@ list_available() -> List[str]
 
 # Modification
 override(updates: Dict) -> Self
-delete(path: str) -> Self
 with_dataset(path: str) -> Self
+with_output_dir(path: str) -> Self
 with_learning_rate(lr: float) -> Self
+with_epochs(epochs: int) -> Self
+with_lora_params(rank: int, alpha: int) -> Self
 with_batch_size(batch_size: int) -> Self
-# ... more with_*() methods
+with_packed(enabled: bool) -> Self
+with_dataset_template(template: str) -> Self
+with_seed(seed: int) -> Self
+# Note: delete() deferred to Phase 2
 
 # Building & Validation
 build() -> Dict
@@ -240,29 +226,10 @@ save(output_path: str, save_metadata: bool = True) -> str
 validate(config_path: str = None) -> bool
 ```
 
-**See**: [Appendix A](appendices/A_merge_semantics.md) for merge semantics, [Appendix B](appendices/B_config_loading.md) for loading details, [Appendix C](appendices/C_high_level_methods.md) for all high-level methods.
-
----
-
-#### GPUEfficiencyHelper
-
-Manages GPU-specific configuration and learns from runs.
-
-**Key methods**:
-```python
-__init__(run_log_dir: str = None)
-suggest_config(model_config: str, max_seq_length: int, strategy: str) -> Dict
-log_run_result(config: Dict, result: Dict)
-parse_torchtune_log(log_file: str) -> Dict
-find_max_batch_size(model_config: str, max_seq_length: int, test_run: bool) -> int
-```
-
-**Evolution phases**:
-1. **Bootstrap**: Uses heuristics and torchtune defaults
-2. **Learning**: Accumulates data from your runs
-3. **Optimization**: Provides smart recommendations
-
-**See**: [Appendix F](appendices/F_gpu_efficiency.md) for complete specification.
+**See**:
+- [Appendix A](appendices/A_merge_semantics.md) for merge semantics
+- [Appendix B](appendices/B_config_loading.md) for loading details
+- [Appendix C](appendices/C_high_level_methods.md) for all high-level methods
 
 ---
 
@@ -281,9 +248,10 @@ builder.validate()
 
 ---
 
-### Pattern 2: Parameter Sweep
+### Pattern 2: Parameter Sweep for SLURM
 
 ```python
+# Generate multiple configs for SLURM job array
 for lr in [1e-4, 3e-4, 5e-4, 1e-3]:
     builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
     builder.with_dataset("data/my_data.json")
@@ -291,6 +259,8 @@ for lr in [1e-4, 3e-4, 5e-4, 1e-3]:
     builder.with_output_dir(f"results/lr_{lr}")
     builder.save(f"configs/lr_{lr}.yaml")
     builder.validate()
+
+# All configs validated before queue submission!
 ```
 
 ---
@@ -310,59 +280,251 @@ builder.save("configs/exp_043.yaml")
 
 ---
 
-### Pattern 4: Scientific + Engineering Separation
+### Pattern 4: Adapt for Different GPU (One-Time Setup)
 
 ```python
-# GPU helper handles engineering
-gpu_helper = GPUEfficiencyHelper()
-gpu_config = gpu_helper.suggest_config(
-    model_config="llama3_1/8B_lora_single_device",
-    max_seq_length=2048,
-    strategy="balanced"
-)
+# Torchtune configs assume A100-80GB
+# If using V100-16GB, adapt once:
 
-# Builder handles scientific parameters
 builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
-builder.override(gpu_config)  # Apply GPU settings
-builder.with_learning_rate(3e-4)  # Focus on science
-builder.with_dataset("data/my_data.json")
-builder.save("configs/exp_001.yaml")
+# Reduce for smaller GPU
+builder.with_batch_size(1)  # was 2
+builder.with_activation_checkpointing(True)  # was False
+builder.save("configs/v100_base.yaml")
 
-# After run completes, helper learns
-run_result = GPUEfficiencyHelper.parse_torchtune_log("logs/exp_001.log")
-gpu_helper.log_run_result(builder.build(), run_result)
+# Now generate sweep from adapted base
+for lr in learning_rates:
+    builder = TorchtuneConfigBuilder.from_file("configs/v100_base.yaml")
+    builder.with_learning_rate(lr)
+    builder.save(f"configs/v100_lr_{lr}.yaml")
+    builder.validate()
 ```
 
 ---
 
-### Pattern 5: Reproducible Experiment Specs
+### Pattern 5: Multi-Dimensional Sweep
 
 ```python
-# experiment_specs.py - version controlled
-EXPERIMENTS = [
-    {
-        "base_config": "llama3_1/8B_lora_single_device",
-        "overrides": {
-            "dataset": {"source": "data/my_data.json"},
-            "optimizer": {"lr": 3e-4},
-            "output_dir": "results/baseline"
-        }
-    },
-    {
-        "base_config": "llama3_1/8B_lora_single_device",
-        "overrides": {
-            "dataset": {"source": "data/my_data.json"},
-            "optimizer": {"lr": 1e-3},
-            "output_dir": "results/high_lr"
-        }
-    }
-]
+# Generate full hyperparameter grid
+import itertools
 
-# Generate all experiments
-for spec in EXPERIMENTS:
-    builder = TorchtuneConfigBuilder.from_dict(spec)
-    builder.save(f"configs/{spec['overrides']['output_dir']}.yaml")
+learning_rates = [1e-4, 3e-4, 5e-4, 1e-3]
+lora_ranks = [8, 16, 32, 64]
+weight_decays = [0.0, 0.01, 0.1]
+
+# 4 x 4 x 3 = 48 configs
+for lr, rank, wd in itertools.product(learning_rates, lora_ranks, weight_decays):
+    builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
+    builder.with_learning_rate(lr)
+    builder.with_lora_params(rank, rank * 2)
+    builder.override({"optimizer": {"weight_decay": wd}})
+    builder.with_output_dir(f"results/lr_{lr}_rank_{rank}_wd_{wd}")
+
+    config_name = f"lr_{lr}_rank_{rank}_wd_{wd}"
+    builder.save(f"configs/{config_name}.yaml")
     builder.validate()
+
+print(f"Generated 48 configs, all validated!")
+```
+
+---
+
+## SLURM Integration
+
+### Why This Tool is Perfect for SLURM
+
+**SLURM challenges**:
+- ❌ Can't iterate quickly (queue wait times)
+- ❌ Need configs that work first try (OOM wastes allocation)
+- ❌ Generating many configs manually is error-prone
+- ❌ Hard to track what changed between experiments
+
+**How this tool helps**:
+- ✅ Generate 100+ configs in seconds
+- ✅ Validate before queue submission (catch errors early)
+- ✅ Start from proven GPU-optimized configs
+- ✅ Reproducibility via metadata
+
+---
+
+### SLURM Workflow Pattern
+
+```python
+# 1. Generate configs
+import itertools
+
+learning_rates = [1e-4, 3e-4, 5e-4, 1e-3]
+lora_ranks = [8, 16, 32, 64]
+
+configs_generated = []
+
+for lr, rank in itertools.product(learning_rates, lora_ranks):
+    builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
+    builder.with_learning_rate(lr)
+    builder.with_lora_params(rank, rank * 2)
+    builder.with_dataset("/shared/data/my_dataset.json")
+    builder.with_output_dir(f"/scratch/results/lr_{lr}_rank_{rank}")
+
+    config_name = f"lr_{lr}_rank_{rank}"
+    config_path = f"configs/{config_name}.yaml"
+    builder.save(config_path)
+    builder.validate()
+
+    configs_generated.append(config_path)
+
+print(f"✓ Generated and validated {len(configs_generated)} configs")
+
+# 2. Generate SLURM job array script
+slurm_script = f"""#!/bin/bash
+#SBATCH --job-name=llama_sweep
+#SBATCH --array=0-{len(configs_generated)-1}
+#SBATCH --gres=gpu:a100:1
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --partition=gpu
+#SBATCH --output=logs/job_%A_%a.out
+#SBATCH --error=logs/job_%A_%a.err
+
+# Get config for this array task
+CONFIGS=({' '.join(configs_generated)})
+CONFIG=${{CONFIGS[$SLURM_ARRAY_TASK_ID]}}
+
+echo "Running config: $CONFIG"
+tune run lora_finetune_single_device --config $CONFIG
+"""
+
+with open("run_sweep.sh", "w") as f:
+    f.write(slurm_script)
+
+print("✓ Generated SLURM script: run_sweep.sh")
+print(f"Submit with: sbatch run_sweep.sh")
+```
+
+---
+
+### SLURM Script Generation (Phase 3)
+
+**Approach**: Template-based with Claude Code skill for flexibility
+
+For Phase 3, we'll provide SLURM script templates and a Claude Code skill for interactive generation, rather than a Python utility. This approach is more flexible for different cluster configurations.
+
+**Option 1: Copy-paste template** (simplest):
+
+```bash
+#!/bin/bash
+#SBATCH --job-name=torchtune_sweep
+#SBATCH --array=0-15  # Adjust for your number of configs
+#SBATCH --gres=gpu:a100:1
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --partition=gpu
+#SBATCH --output=logs/job_%A_%a.out
+#SBATCH --error=logs/job_%A_%a.err
+
+# List your config files
+CONFIGS=(
+    configs/lr_0.0001.yaml
+    configs/lr_0.0003.yaml
+    # ... add all your configs
+)
+
+# Get config for this array task
+CONFIG=${CONFIGS[$SLURM_ARRAY_TASK_ID]}
+
+echo "Running config: $CONFIG"
+tune run lora_finetune_single_device --config $CONFIG
+```
+
+**Option 2: Claude Code skill** (Phase 3, more flexible):
+
+A Claude Code skill will interactively generate SLURM scripts by:
+- Reading your generated configs
+- Asking about cluster parameters (GPU type, partition, time limits)
+- Generating customized SLURM scripts
+- Adapting to your specific cluster configuration
+
+This provides more flexibility than a hardcoded Python utility while still being easy to use.
+
+---
+
+### Real-World SLURM Example
+
+Complete workflow from config generation to job submission:
+
+```python
+#!/usr/bin/env python3
+"""
+generate_sweep.py - Generate configs and SLURM script for LR sweep
+"""
+
+from torchtune_config_writer import TorchtuneConfigBuilder
+from torchtune_config_writer.slurm_utils import generate_slurm_array_script
+import os
+
+# Create directories
+os.makedirs("configs", exist_ok=True)
+os.makedirs("logs", exist_ok=True)
+
+# Parameter sweep
+learning_rates = [1e-4, 3e-4, 5e-4, 1e-3]
+config_paths = []
+
+print("Generating configs...")
+for lr in learning_rates:
+    builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
+
+    # Scientific parameters
+    builder.with_learning_rate(lr)
+    builder.with_lora_params(32, 64)
+    builder.with_epochs(3)
+    builder.with_dataset("/shared/datasets/alpaca_cleaned.json")
+    builder.with_output_dir(f"/scratch/$USER/results/lr_{lr}")
+
+    # Save and validate
+    config_path = f"configs/lr_{lr}.yaml"
+    builder.save(config_path)
+
+    try:
+        builder.validate()
+        print(f"  ✓ {config_path}")
+        config_paths.append(config_path)
+    except Exception as e:
+        print(f"  ✗ {config_path}: {e}")
+
+# Generate SLURM script
+if config_paths:
+    generate_slurm_array_script(
+        config_paths=config_paths,
+        output_path="run_sweep.sh",
+        job_name="llama3_lr_sweep",
+        gpu_type="a100",
+        mem_gb=64,
+        time_hours=12
+    )
+
+    print(f"\n✓ Generated {len(config_paths)} configs")
+    print(f"✓ Generated run_sweep.sh")
+    print(f"\nSubmit with: sbatch run_sweep.sh")
+else:
+    print("\n✗ No valid configs generated!")
+```
+
+**Run**:
+```bash
+$ python generate_sweep.py
+Generating configs...
+  ✓ configs/lr_0.0001.yaml
+  ✓ configs/lr_0.0003.yaml
+  ✓ configs/lr_0.0005.yaml
+  ✓ configs/lr_0.001.yaml
+
+✓ Generated 4 configs
+✓ Generated run_sweep.sh
+
+Submit with: sbatch run_sweep.sh
+
+$ sbatch run_sweep.sh
+Submitted batch job 123456
 ```
 
 ---
@@ -371,64 +533,81 @@ for spec in EXPERIMENTS:
 
 ### Phase 1: Core Builder (MVP) ⏳ Current
 
+**Duration**: 3-4 weeks
+
+**Components**:
 1. `TorchtuneConfigBuilder.__init__` - load base configs via `tune cp`
 2. `override()` - deep merge implementation
-3. `delete()` - delete keys by path
-4. `build()` - apply operations in order
-5. `save()` - write YAML (basic, no metadata)
-6. High-level methods for scientific params: `with_dataset`, `with_learning_rate`, `with_epochs`
-7. High-level method for engineering: `with_batch_size` (manual override)
+3. `build()` - apply operations in order
+4. `save()` - write YAML with simplified metadata
+5. `validate()` - call `tune validate` subprocess
+6. Essential high-level methods (9 methods):
+   - `with_dataset()` - Change dataset path
+   - `with_output_dir()` - Change output directory
+   - `with_learning_rate()` - Change optimizer LR
+   - `with_epochs()` - Change training duration
+   - `with_lora_params()` - Change LoRA architecture (rank + alpha paired)
+   - `with_batch_size()` - Manual GPU memory control
+   - `with_packed()` - Enable/disable sequence packing
+   - `with_dataset_template()` - Set prompt template for SFT
+   - `with_seed()` - Set random seed for reproducibility
+7. Simplified metadata (source, versions, timestamp, overrides only)
 8. Unit tests for core functionality
 
-**Deliverables**: Working builder with basic config generation
+**Deliverables**: Working builder with config generation, validation, and simplified metadata
+
+**SLURM value**: Generate and validate multiple configs before queue submission
+
+**Note**: `delete()` method deferred to Phase 2
 
 ---
 
-### Phase 2: Validation & Metadata
+### Phase 2: Discovery & Reuse
 
-1. `validate()` - call `tune validate` subprocess
-2. `save()` with metadata - write `.meta.yaml`
-3. `from_dict()` - construct from spec dict
-4. `from_file()` - load from user YAML
-5. Integration tests with `tune validate`
+**Duration**: 1-2 weeks
 
-**Deliverables**: Validated configs with reproducibility metadata
-
----
-
-### Phase 3: Discovery & Reuse
-
+**Components**:
 1. `list_available()` - discover torchtune configs via `tune ls`
-2. `from_previous()` - load from metadata, reconstruct builder
-3. Additional high-level methods based on usage (5 → 10-12 methods)
-4. Documentation and examples
+2. `from_file()` - load from user YAML (e.g., GPU-adapted base)
+3. `from_dict()` - construct from spec dict
+4. `from_previous()` - load from metadata, reconstruct builder
+5. `delete()` - delete keys by path (deferred from Phase 1)
+6. Enhanced metadata with privacy features (path sanitization, environment tracking)
+7. Additional high-level methods based on usage (2-4 more methods as needed)
+8. Integration tests with `tune validate`
+9. Documentation and examples
 
-**Deliverables**: Full discovery and iteration workflow
+**Deliverables**: Full discovery and iteration workflow with metadata roundtrip
 
----
-
-### Phase 4: GPU Efficiency Helper (Self Improving)
-
-1. `GPUEfficiencyHelper.__init__` - bootstrap with heuristics
-2. `suggest_config()` - recommend GPU settings
-3. Bootstrap knowledge: parse torchtune's shipped configs
-4. `log_run_result()` - append to run_logs.jsonl
-5. `parse_torchtune_log()` - extract metrics
-6. Integration examples showing separation of concerns
-7. Tests for heuristic and learning modes
-
-**Deliverables**: Self-improving GPU optimization
+**SLURM value**: Adapt configs for different GPUs, iterate on successful experiments
 
 ---
 
-### Phase 5: Batch Generation (Optional)
+### Phase 3: SLURM Integration & Batch Generation
 
-1. Separate `sweep_utils.py` module
-2. Helper functions for common patterns
-3. Examples for parameter sweeps
-4. Integration with GPU helper
+**Duration**: 1-2 days
 
-**Deliverables**: Tools for large-scale experiment generation
+**Components**:
+1. SLURM script templates for common patterns (job arrays, parameter sweeps)
+2. Claude Code skill for interactive SLURM script generation
+3. Examples for common SLURM workflows
+4. Documentation for SLURM integration
+
+**Deliverables**: SLURM templates and skill for flexible script generation
+
+**SLURM value**: End-to-end workflow from config generation to job submission
+
+**Note**: Skill-based approach provides more flexibility than hardcoded Python utility, adapts to different cluster configurations
+
+---
+
+### Total Timeline: 4-6 weeks
+
+- Phase 1: 3-4 weeks
+- Phase 2: 1-2 weeks
+- Phase 3: 1-2 days
+
+Much faster than original 8-12 weeks by removing GPU helper complexity and using skill-based SLURM approach.
 
 ---
 
@@ -444,42 +623,39 @@ torchtune_config_writer/
 ├── SPEC.md                      # This document (master spec)
 ├── SETUP.md                     # Environment setup instructions
 ├── README.md                    # Project overview
-├── SESSION_LOG.md               # Development session notes
 ├── pyproject.toml               # Project config and dependencies
 ├── setup.sh                     # Automated setup script
 │
 ├── appendices/                  # Detailed specifications
-│   ├── A_merge_semantics.md
-│   ├── B_config_loading.md
-│   ├── C_high_level_methods.md (🚧 TODO)
-│   ├── D_metadata.md (🚧 TODO)
-│   ├── E_testing.md
-│   └── F_gpu_efficiency.md (🚧 TODO)
+│   ├── A_merge_semantics.md     # ✅ Complete
+│   ├── B_config_loading.md      # ✅ Complete
+│   ├── C_high_level_methods.md  # ✅ Complete
+│   ├── D_metadata.md            # ✅ Complete
+│   └── E_testing.md             # ✅ Complete
 │
-├── config_builder.py            # TorchtuneConfigBuilder (Phase 1-3)
-├── gpu_efficiency.py            # GPUEfficiencyHelper (Phase 4)
-├── sweep_utils.py               # Batch generation helpers (Phase 5)
+├── config_builder.py            # TorchtuneConfigBuilder
+├── slurm_templates/             # SLURM script templates (Phase 3)
+│   ├── job_array_basic.sh       # Basic job array template
+│   └── job_array_sweep.sh       # Parameter sweep template
 │
 ├── tests/                       # Test suite
-│   ├── test_builder.py
-│   ├── test_integration.py
-│   ├── test_metadata.py
-│   ├── test_gpu_efficiency.py
-│   └── fixtures/
+│   ├── test_builder.py          # Core builder tests
+│   ├── test_integration.py      # Integration with tune validate
+│   ├── test_metadata.py         # Metadata generation tests
+│   └── fixtures/                # Test fixtures
 │
 ├── examples/                    # Usage examples
 │   ├── basic_usage.py
 │   ├── parameter_sweep.py
-│   ├── gpu_efficiency_bootstrap.py
-│   ├── gpu_efficiency_learning.py
+│   ├── slurm_integration.py     # SLURM workflow example
+│   ├── multi_gpu_adaptation.py  # Adapting for different GPUs
 │   └── experiment_tracking.py
 │
-├── example_configs/             # Sample configs for development
+├── example_configs/             # Sample configs
 │   ├── llama3_1_8B_lora.yaml
 │   ├── llama3_1_8B_full.yaml
 │   └── llama3_2_1B_lora.yaml
 │
-├── logs/                        # Run logs (JSONL, gitignored)
 └── scratch/                     # Temporary experiments (gitignored)
 ```
 
@@ -512,28 +688,13 @@ See `SETUP.md` for detailed installation instructions.
 ## Success Criteria
 
 1. **Correctness**: All generated configs pass `tune validate`
-2. **Usability**: Simple API for common operations, clear error messages
-3. **Reproducibility**: Metadata enables recreation of any config
-4. **Testability**: Comprehensive test coverage of core functionality
-5. **Maintainability**: Clean, modular code that's easy to extend
-6. **Documentation**: Clear examples for common use cases
-
----
-
-## Future Extensions (Post-MVP)
-
-1. **More high-level methods**: Add based on actual usage patterns
-2. **Config diff tool**: Compare two configs, show differences
-3. **Template library**: Save user's common patterns as reusable templates
-4. **Validation hooks**: Custom validation rules for specific use cases
-5. **Multi-config management**: Tools for managing experiment suites
-6. **Experiment tracking integration**: Export to MLflow, Weights & Biases
-7. **GPU efficiency improvements**:
-   - Automatic log parsing and ingestion
-   - Binary search for max batch size via test runs
-   - Community knowledge sharing (opt-in, anonymized)
-   - Advanced memory estimation models
-   - Multi-GPU and distributed training support
+2. **Efficiency**: Generate 100 configs in < 10 seconds
+3. **Usability**: Simple API for common operations, clear error messages
+4. **Reproducibility**: Metadata enables recreation of any config
+5. **SLURM Integration**: Seamless workflow from config generation to job submission
+6. **Testability**: Comprehensive test coverage of core functionality
+7. **Maintainability**: Clean, modular code that's easy to extend
+8. **Documentation**: Clear examples for SLURM use cases
 
 ---
 
@@ -541,35 +702,34 @@ See `SETUP.md` for detailed installation instructions.
 
 **Scientific**:
 - Metadata for reproducibility, authoritative validation, change tracking
-- Clear separation of scientific vs engineering parameters
-- Researchers focus on what matters: learning rates, architectures, data
+- Validate configs before queue submission (avoid wasting allocation time)
+- Start from proven torchtune configs (A100-optimized)
 
 **Modular**:
-- Separate concerns (builder, metadata, validation, GPU efficiency)
-- Scientific decisions in TorchtuneConfigBuilder
-- Engineering decisions in GPUEfficiencyHelper
-- Easy to extend and compose
+- Single-component architecture (TorchtuneConfigBuilder)
+- Clear separation of core builder vs optional utilities
+- Easy to extend with new high-level methods
 
 **Practical**:
-- Leverage existing torchtune configs, simple implementation
-- No over-engineering: start with heuristics, improve over time
-- GPU helper works day 1, gets better with use
+- Leverage existing torchtune configs (don't reinvent GPU tuning)
+- Focus on real use case: SLURM parameter sweeps
+- Simple implementation: no complex learning or optimization
+- Works with existing SLURM infrastructure
 
 **Privacy Respecting**:
 - No data collection, all local processing
-- Run logs stored locally in JSONL format
-- Future community sharing is opt-in and anonymized
+- Metadata stored locally with configs
+- No external dependencies or services
 
 **Self Improving**:
-- GPU helper learns from every run
-- Bootstrap → Learning → Optimization evolution
-- Track successful configs, expand API based on usage
-- Continuous improvement loop built into design
+- Track successful configs via metadata
+- Add high-level methods based on actual usage patterns
+- Community can share GPU-adapted base configs
 
 **Tested**:
-- Comprehensive tests, validation at every step
-- Tests for both heuristic and learning modes
+- Comprehensive tests for core functionality
 - Integration tests with actual torchtune validation
+- Test SLURM utilities with realistic examples
 
 See `CLAUDE.md` for complete guiding principles.
 
@@ -586,16 +746,31 @@ Detailed specifications are in separate appendices for maintainability:
   Four loading methods (torchtune shipped, file, dict, previous), source tracking, path resolution, and error handling.
 
 - **[Appendix C: High-Level Methods](appendices/C_high_level_methods.md)** ✅
-  Complete specification of all `with_*()` convenience methods, organized by scientific vs engineering parameters.
+  Complete specification of all `with_*()` convenience methods. Focus on 6-7 essential methods for Phase 1.
 
 - **[Appendix D: Metadata Format](appendices/D_metadata.md)** ✅
-  Metadata structure, environment tracking, data provenance, privacy considerations, and file format decisions.
+  Metadata structure, environment tracking, data provenance, privacy considerations, and file format decisions. Focus on basic metadata for Phase 1.
 
 - **[Appendix E: Testing Strategy](appendices/E_testing.md)** ✅
   Comprehensive testing approach including unit tests, integration tests, test organization, and coverage goals.
 
-- **[Appendix F: GPU Efficiency Helper](appendices/F_gpu_efficiency.md)** ✅
-  Complete specification of GPUEfficiencyHelper class, bootstrap heuristics, learning algorithms, and integration patterns.
+---
+
+## Changes from v0.1.0
+
+**Major changes**:
+1. **Added SLURM context** - Primary use case is now SLURM-based training
+2. **Removed GPU Efficiency Helper** - Appendix F deleted, Phase 4 removed
+3. **Simplified architecture** - Single-component design (TorchtuneConfigBuilder only)
+4. **Added SLURM integration** - New section with utilities for job array generation
+5. **Reduced scope** - 5-7 weeks instead of 8-12 weeks
+
+**Rationale**:
+- Torchtune configs already have good GPU defaults
+- SLURM users know their GPU type (explicit in allocation)
+- Can't iterate quickly on SLURM (queue wait times)
+- Real value is batch config generation, not GPU tuning
+- Focus on practical use case: parameter sweeps for SLURM clusters
 
 ---
 

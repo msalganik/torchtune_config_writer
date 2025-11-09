@@ -86,25 +86,6 @@ See **Appendix B: Config Loading Strategy** for detailed testing strategy coveri
 - Loading from previous configs with metadata
 - Error handling for each loading method
 
-### GPU Efficiency Helper Tests
-
-**Heuristic Mode Tests:**
-1. Default suggestions work without historical data
-2. Conservative vs balanced vs aggressive strategies
-3. Bootstrap from torchtune shipped configs
-4. Fallback when no heuristics available
-
-**Learning Mode Tests:**
-1. Parse run logs correctly
-2. Historical data influences suggestions
-3. Confidence scores increase with more data
-4. Handle OOM failures gracefully
-
-**Integration Tests:**
-1. Combine scientific + engineering params
-2. Conflict detection works
-3. Log run results append correctly
-
 ### Metadata Tests
 
 **Generation Tests:**

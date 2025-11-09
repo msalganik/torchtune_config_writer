@@ -886,24 +886,31 @@ dataset:
 
 ## Summary: Complete Method List
 
-**Phase 1 MVP - 13 Total Methods:**
+**Phase 1 (Essential - 9 methods):**
 
-**Scientific Parameters** (affect experiment outcomes):
-1. `with_dataset(path: str)` - Dataset source
-2. `with_dataset_template(template: str)` - Prompt template format
-3. `with_learning_rate(lr: float)` - Optimizer LR
-4. `with_epochs(epochs: int)` - Training duration
-5. `with_lora_params(rank: int, alpha: int)` - LoRA architecture (paired)
-6. `with_gradient_accumulation_steps(steps: int)` - Effective batch size
-7. `with_max_seq_length(length: int)` - Sequence capacity
-8. `with_seed(seed: int)` - Reproducibility
+These methods cover supervised fine-tuning workflows and should be implemented first:
 
-**Engineering Parameters** (affect resources, not results):
-9. `with_output_dir(path: str)` - Output location
-10. `with_batch_size(batch_size: int)` - GPU memory
-11. `with_activation_checkpointing(enabled: bool)` - Memory/speed tradeoff
-12. `with_dtype(dtype: str)` - Precision/memory
-13. `with_packed(enabled: bool)` - Sequence packing for speed
+1. `with_dataset(path: str)` - Dataset source (Scientific)
+2. `with_output_dir(path: str)` - Output location (Engineering)
+3. `with_learning_rate(lr: float)` - Optimizer LR (Scientific)
+4. `with_epochs(epochs: int)` - Training duration (Scientific)
+5. `with_lora_params(rank: int, alpha: int)` - LoRA architecture (Scientific, paired)
+6. `with_batch_size(batch_size: int)` - GPU memory control (Engineering)
+7. `with_packed(enabled: bool)` - Sequence packing for efficiency (Engineering)
+8. `with_dataset_template(template: str)` - Prompt template for SFT (Scientific)
+9. `with_seed(seed: int)` - Reproducibility (Scientific)
+
+**Phase 2+ (Add based on usage):**
+
+Add these based on actual usage patterns:
+
+- `with_gradient_accumulation_steps(steps: int)` - Effective batch size (Scientific)
+- `with_max_seq_length(length: int)` - Sequence capacity (Scientific)
+- `with_dtype(dtype: str)` - Precision/memory (Engineering)
+- `with_activation_checkpointing(enabled: bool)` - Memory/speed tradeoff (Engineering)
+- `with_compile(enabled: bool)` - torch.compile optimization (Engineering)
+
+**Rationale**: Phase 1 methods cover supervised fine-tuning (primary use case). Users can always use `override()` for Phase 2+ parameters. Add more based on feedback.
 
 ---
 
@@ -949,61 +956,66 @@ builder.with_epochs(3)
 builder.with_seed(42)
 ```
 
-### Pattern 2: Engineering Parameter Configuration
+### Pattern 2: Engineering Parameter Configuration (Manual GPU Control)
 
 ```python
-# GPU efficiency settings (separate concern)
+# GPU efficiency settings (manual control)
+# Torchtune configs have good defaults - only override if needed
 builder.with_batch_size(2)
 builder.with_activation_checkpointing(True)
-builder.with_dtype("bf16")
-builder.with_packed(True)  # Enable packing for speed
-builder.with_compile(True)  # Enable torch.compile for speed
 builder.with_output_dir("results/exp_001")
+
+# Phase 2+ methods (use override() for now)
+builder.override({"dtype": "bf16"})
+builder.override({"packed": True})  # Enable packing for speed
+builder.override({"compile": True})  # Enable torch.compile for speed
 ```
 
-### Pattern 3: Combined with GPU Helper
+### Pattern 3: Adapting for Different GPU (One-Time Setup)
 
 ```python
-# Let GPU helper handle engineering
-gpu_helper = GPUEfficiencyHelper()
-gpu_config = gpu_helper.suggest_config(
-    model_config="llama3_1/8B_lora_single_device",
-    max_seq_length=2048
-)
-builder.override(gpu_config)  # batch_size, dtype, checkpointing
+# Torchtune configs assume A100-80GB
+# If using V100-16GB, adapt once then generate sweep
 
-# Focus on scientific parameters
-builder.with_dataset_template("torchtune.data.AlpacaInstructTemplate")
-builder.with_learning_rate(3e-4)
-builder.with_lora_params(32, 64)
-builder.with_seed(42)
+# Create GPU-adapted base config (one time)
+builder = TorchtuneConfigBuilder("llama3_1/8B_lora_single_device")
+builder.with_batch_size(1)  # Reduce for smaller GPU
+builder.with_activation_checkpointing(True)  # Enable for memory
+builder.save("configs/v100_base.yaml")
+
+# Generate parameter sweep from adapted base
+for lr in [1e-4, 3e-4, 5e-4, 1e-3]:
+    builder = TorchtuneConfigBuilder.from_file("configs/v100_base.yaml")
+    builder.with_learning_rate(lr)
+    builder.with_output_dir(f"results/lr_{lr}")
+    builder.save(f"configs/lr_{lr}.yaml")
+    builder.validate()
 ```
 
 ---
 
 ## Implementation Priority
 
-**Phase 1a** (Core Builder MVP):
-1. ✅ with_dataset
-2. ✅ with_output_dir
-3. ✅ with_learning_rate
-4. ✅ with_batch_size
-5. ✅ with_epochs
+**Phase 1 (Essential Methods - MVP):**
+1. ✅ `with_dataset(path)` - Changes every experiment
+2. ✅ `with_output_dir(path)` - Changes every experiment
+3. ✅ `with_learning_rate(lr)` - Most tuned hyperparameter
+4. ✅ `with_epochs(epochs)` - Common training parameter
+5. ✅ `with_lora_params(rank, alpha)` - Paired LoRA parameters
+6. ✅ `with_batch_size(batch_size)` - Manual GPU memory control
+7. ✅ `with_packed(enabled)` - Sequence packing for variable-length data
+8. ✅ `with_dataset_template(template)` - Prompt formatting for SFT (primary use case)
+9. ✅ `with_seed(seed)` - Reproducibility for scientific experiments
 
-**Phase 1b** (Extended Methods):
-6. with_dataset_template
-7. with_lora_params (paired)
-8. with_gradient_accumulation_steps
-9. with_max_seq_length
-10. with_activation_checkpointing
-11. with_seed
-12. with_dtype
-13. with_packed
-14. with_compile
+**Phase 2+ (Add Based on Usage):**
+- `with_gradient_accumulation_steps(steps)` - Can use override()
+- `with_max_seq_length(length)` - Usually set once per project
+- `with_dtype(dtype)` - Usually set once per GPU
+- `with_activation_checkpointing(enabled)` - Advanced memory control
+- `with_compile(enabled)` - Advanced optimization
+- See "Potential Future Methods" section for more
 
-**Phase 2+** (Based on usage):
-- Additional methods as needed
-- See "Potential Future Methods" section
+**Decision**: Start with 9 essential methods covering supervised fine-tuning workflows. Users can use `override()` for Phase 2+ parameters. Add more methods based on actual usage patterns and user feedback.
 
 ---
 
@@ -1028,15 +1040,15 @@ Methods to consider adding based on usage patterns:
 
 ## Design Rationale
 
-### Why These 14 Methods?
+### Why 6-7 Essential Methods for Phase 1?
 
-1. **High frequency** - Cover 80% of common modifications
-2. **Clear categories** - Split scientific vs engineering
-3. **Meaningful pairing** - Force lora_rank + lora_alpha together
-4. **Critical for instruction tuning** - Dataset template is essential for prompt formatting
-5. **GPU efficiency** - Packing and compile significantly impact training speed
-6. **Escape hatch** - Users can always use `override()` for anything else
-7. **Not over-engineered** - Stop at 14, add more based on actual usage
+1. **High frequency** - These 6-7 methods cover 80% of common modifications
+2. **Clear categories** - Mix of scientific (what to learn) and engineering (GPU control)
+3. **Meaningful pairing** - Force lora_rank + lora_alpha together (scientifically related)
+4. **Escape hatch** - Users can always use `override()` for Phase 2+ parameters
+5. **Not over-engineered** - Start simple, add more based on actual usage patterns
+6. **SLURM-focused** - Priorities match parameter sweep use case (LR, LoRA, dataset)
+7. **Practical** - Torchtune configs have good GPU defaults, manual control when needed
 
 ### Why Pair lora_rank + lora_alpha?
 

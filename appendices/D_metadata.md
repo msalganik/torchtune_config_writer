@@ -74,40 +74,48 @@ Metadata files (`.meta.yaml`) accompany generated configs to enable:
 
 **Decision**: Start simple, enhance over time
 
-**Phase 2 (Basic metadata)**:
+**Phase 1 (Simplified metadata)**:
 - Source tracking (where config came from)
 - Version information (tool, torchtune, Python)
 - Override tracking (what changed from base)
 - Timestamp
+- **No privacy features** (no path sanitization, no dataset hashing, no git info)
 
-**Phase 2.5 (Enhanced metadata)**:
+**Phase 2 (Enhanced metadata)**:
 - Extended environment info (torch, CUDA versions)
-- Data provenance (dataset paths and hashes)
+- Privacy features (path sanitization, optional dataset hashing)
+- Data provenance (dataset paths and hashes - opt-in)
 - Optional operation history
 
 **Phase 3 (Advanced features)**:
-- Git integration (commit hashes, dirty state)
-- Privacy controls (sanitization, field exclusion)
+- Git integration (commit hashes, dirty state - opt-in)
 - Custom metadata fields
+- Metadata validation and migration
 
 ---
 
 ### 4. Privacy by Default
 
-**Decision**: Privacy-respecting defaults with opt-in for more info
+**Decision**: Privacy-respecting defaults with opt-in for more info (Phase 2+)
 
-**Defaults**:
+**Phase 1 defaults** (Simplified):
 - ✅ Save metadata (reproducibility matters)
+- ❌ No path sanitization (Phase 2)
+- ❌ No dataset hashing (Phase 2)
+- ❌ No hostname (Phase 2)
+- ❌ No git info (Phase 2)
+
+**Phase 2+ defaults** (Enhanced):
 - ✅ Sanitize absolute paths (replace `/home/username` with `~`)
-- ❌ No dataset hashing by default (privacy)
+- ❌ No dataset hashing by default (opt-in for privacy)
 - ❌ No hostname by default (infrastructure privacy)
 - ❌ No git info by default (may reveal private repos)
 
-**User control**:
+**User control** (Phase 2+):
 ```python
 builder.save("config.yaml",
              save_metadata=True,  # Can disable entirely
-             sanitize_paths=True,  # Default: True
+             sanitize_paths=True,  # Default: True (Phase 2+)
              include_git_info=False,  # Default: False
              hash_dataset=False)  # Default: False
 ```
@@ -116,12 +124,12 @@ builder.save("config.yaml",
 
 ## Metadata Format Specification
 
-### Phase 2: Basic Metadata (MVP)
+### Phase 1: Simplified Metadata (MVP)
 
 **File**: `config.meta.yaml` (same name as config, with `.meta.yaml` extension)
 
 ```yaml
-# config.meta.yaml - Phase 2 format
+# config.meta.yaml - Phase 1 format (simplified)
 metadata_version: "1.0"  # Metadata schema version
 
 # Source information
@@ -130,7 +138,7 @@ base_config: "llama3_1/8B_lora_single_device"  # if torchtune_shipped
 source_file: null  # if from_file: "/path/to/original.yaml"
 
 # Version information
-tool_version: "0.1.0"
+tool_version: "0.2.0"
 python_version: "3.11.5"
 torchtune_version: "0.6.1"
 
@@ -143,11 +151,8 @@ overrides:
   optimizer:
     lr: 0.001
   dataset:
-    source: "~/data/my_data.json"  # Sanitized path
-  output_dir: "~/results/exp_001"
-
-deletions:
-  - "clip_grad_norm"
+    source: "/home/user/data/my_data.json"  # Raw paths (no sanitization in Phase 1)
+  output_dir: "/home/user/results/exp_001"
 ```
 
 **Field descriptions**:
@@ -170,17 +175,23 @@ deletions:
 
 ---
 
-### Phase 2.5: Enhanced Metadata
+### Phase 2: Enhanced Metadata
 
-**Additional fields** (opt-in):
+**Additional fields** added in Phase 2:
 
 ```yaml
-# Extended environment (always included in Phase 2.5)
+# Extended environment (always included in Phase 2)
 environment:
   torch_version: "2.1.0"
   torchao_version: "0.14.0"
   cuda_version: "12.1"  # null if CPU-only
   platform: "Linux-5.15.0-x86_64"
+
+# Path sanitization (enabled by default in Phase 2)
+overrides:
+  dataset:
+    source: "~/data/my_data.json"  # Sanitized path
+  output_dir: "~/results/exp_001"
 
 # Data provenance (opt-in: hash_dataset=True)
 data_provenance:
@@ -956,37 +967,43 @@ def test_git_info_opt_in():
 
 ## Phase Roadmap
 
-### Phase 2: Basic Metadata (Current Implementation)
+### Phase 1: Simplified Metadata (Current Implementation)
 
 **Scope**:
 - ✅ Metadata version tracking
 - ✅ Source tracking (type, base config, source file)
 - ✅ Version information (tool, Python, torchtune)
 - ✅ Timestamp
-- ✅ Overrides and deletions tracking
+- ✅ Overrides tracking
 - ✅ Save to `.meta.yaml`
-- ✅ Load with `from_previous()`
-- ✅ Path sanitization (privacy)
+- ❌ No path sanitization (Phase 2)
+- ❌ No privacy features (Phase 2)
+- ❌ No environment tracking (Phase 2)
 
-**Implementation priority**: Required for Phase 2 deliverables
+**Implementation priority**: Minimal metadata for MVP
+
+**Note**: `from_previous()` is Phase 2, so metadata roundtrip not needed in Phase 1
 
 ---
 
-### Phase 2.5: Enhanced Metadata
+### Phase 2: Enhanced Metadata
 
 **Scope**:
+- 🚧 Load with `from_previous()` (metadata roundtrip)
+- 🚧 Deletion tracking for `delete()` method
 - 🚧 Extended environment (torch, CUDA, platform)
+- 🚧 Path sanitization (privacy by default)
 - 🚧 Data provenance (opt-in hashing)
 - 🚧 Operation history (opt-in tracking)
 
-**Implementation priority**: Nice-to-have for Phase 2, required for Phase 3
+**Implementation priority**: Required for Phase 2 deliverables
 
 ---
 
 ### Phase 3: Advanced Features
 
 **Scope**:
-- 🚧 Git integration (commit, branch, dirty state)
+- 🚧 Git integration (commit, branch, dirty state - opt-in)
 - 🚧 Custom metadata fields
 - 🚧 Metadata validation
 - 🚧 Schema migration
