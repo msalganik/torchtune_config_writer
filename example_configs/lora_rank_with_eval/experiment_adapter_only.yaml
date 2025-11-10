@@ -1,0 +1,117 @@
+# Example experiment with ADAPTER-ONLY checkpointing
+# More storage efficient - saves only LoRA weights, not full model
+
+experiment:
+  name: "lora_rank_adapter_only"
+  framework: "torchtune"
+
+  question: "How does LoRA rank affect downstream task performance?"
+  researcher: "Alice"
+  date: "2025-01-09"
+  tags: ["lora", "evaluation", "adapter-only", "example"]
+  notes: |
+    Storage-efficient version: saves only LoRA adapter weights.
+
+    Adapter files are typically 10-50 MB vs 15+ GB for full models.
+
+    Two options for evaluation:
+    1. Merge adapters into full model (simple, uses more temp storage)
+    2. Load adapters directly in Inspect (advanced, needs verification)
+
+framework_config:
+  base_config: "llama3_1/8B_lora_single_device"
+
+variables:
+  lora_rank: [8, 16, 32, 64]
+
+controls:
+  learning_rate: 3e-4
+  lora_alpha: 32
+  epochs: 3
+  batch_size: 2
+  seed: 42
+  dataset: "data/alpaca.json"
+
+  # Save ADAPTER-ONLY weights (not full model)
+  # This is the key difference from the full model example
+  _override:
+    checkpointer:
+      _component_: torchtune.training.FullModelHFCheckpointer
+      checkpoint_dir: ${output_dir}/checkpoints
+      output_dir: ${output_dir}/adapter  # Adapter directory
+      save_adapter_weights_only: True   # KEY: Only save adapter weights
+
+evaluation:
+  enabled: true
+  framework: "inspect"
+  checkpoint: "last"
+
+  # IMPORTANT: Set this to "adapter" to indicate we're using LoRA adapters
+  model_format: "adapter"  # Changed from "hf"
+
+  # Base model for loading adapters
+  # The adapter will be loaded on top of this base model
+  base_model: "meta-llama/Llama-3.1-8B"  # Or local path to base model
+
+  tasks_dir: "evals/"
+
+  tasks:
+    - name: "mmlu_subset"
+      file: "mmlu_subset.py"
+      function: "mmlu_subset"
+      args:
+        subjects: ["math", "physics"]
+
+    - name: "domain_qa"
+      file: "domain_qa.py"
+      function: "domain_qa"
+      args:
+        split: "test"
+        max_samples: 100
+
+output:
+  configs_dir: "configs/"
+  results_dir: "results/"
+  eval_results_dir: "eval_results/"
+
+# ==============================================================================
+# STORAGE COMPARISON
+# ==============================================================================
+#
+# Full model (model_format: "hf"):
+#   - results/run_000/hf_model/  (~15 GB for Llama-3.1-8B)
+#   - results/run_001/hf_model/  (~15 GB)
+#   - results/run_002/hf_model/  (~15 GB)
+#   - results/run_003/hf_model/  (~15 GB)
+#   Total: ~60 GB
+#
+# Adapter-only (model_format: "adapter"):
+#   - results/run_000/adapter/  (~20 MB for rank=8)
+#   - results/run_001/adapter/  (~40 MB for rank=16)
+#   - results/run_002/adapter/  (~80 MB for rank=32)
+#   - results/run_003/adapter/  (~160 MB for rank=64)
+#   Total: ~300 MB
+#
+# Savings: 60 GB → 0.3 GB (200x reduction!)
+#
+# ==============================================================================
+# EVALUATION OPTIONS
+# ==============================================================================
+#
+# The generated eval script will need to load adapters, not full models.
+# Two approaches:
+#
+# Option A: Merge adapters into full model (SIMPLE, uses temp storage)
+#   - Before eval, merge adapter + base model → full model
+#   - Evaluate full model with Inspect
+#   - Delete merged model after eval
+#   - Adds ~15 GB temp storage per eval job
+#
+# Option B: Load adapters directly in Inspect (ADVANCED, minimal storage)
+#   - Load base model once
+#   - Load adapter on top with PEFT
+#   - Requires custom model loading in Inspect
+#   - Needs verification that Inspect supports this
+#
+# The tool can generate eval scripts for either approach.
+#

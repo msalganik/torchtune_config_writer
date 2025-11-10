@@ -1,0 +1,5 @@
+{"input": "What is the capital of France?", "target": ["Paris", "paris"]}
+{"input": "What is 2 + 2?", "target": ["4", "four"]}
+{"input": "What color is the sky on a clear day?", "target": ["blue", "Blue"]}
+{"input": "How many legs does a spider have?", "target": ["8", "eight"]}
+{"input": "What is the largest planet in our solar system?", "target": ["Jupiter", "jupiter"]}

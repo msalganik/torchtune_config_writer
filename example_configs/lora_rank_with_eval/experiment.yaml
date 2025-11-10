@@ -1,0 +1,102 @@
+# Example experiment with evaluation support
+# This demonstrates the complete workflow: training + evaluation
+
+experiment:
+  name: "lora_rank_with_eval"
+  framework: "torchtune"
+
+  question: "How does LoRA rank affect downstream task performance?"
+  hypothesis: "Higher ranks will improve performance but with diminishing returns"
+  researcher: "Alice"
+  date: "2025-01-09"
+  tags: ["lora", "evaluation", "llama3.1", "example"]
+  notes: |
+    This is an example experiment demonstrating:
+    - Variable sweeps over LoRA rank
+    - Post-training evaluation using Inspect AI
+    - User-written evaluation tasks
+    - Complete end-to-end workflow
+
+framework_config:
+  base_config: "llama3_1/8B_lora_single_device"
+
+variables:
+  # Sweep over LoRA rank to study its effect
+  lora_rank: [8, 16, 32, 64]
+
+controls:
+  # Fixed hyperparameters
+  learning_rate: 3e-4
+  lora_alpha: 32  # Paired with lora_rank
+  epochs: 3
+  batch_size: 2
+  seed: 42
+  dataset: "data/alpaca.json"
+
+  # Configure HuggingFace checkpointer for Inspect AI evaluation
+  # This is REQUIRED when using evaluation
+  _override:
+    checkpointer:
+      _component_: torchtune.training.FullModelHFCheckpointer
+      checkpoint_dir: ${output_dir}/checkpoints
+      output_dir: ${output_dir}/hf_model
+
+    # Optional: Enable progress logging
+    metric_logger:
+      _component_: torchtune.training.metric_logging.WandBLogger
+      project: lora_rank_study
+
+evaluation:
+  enabled: true
+  framework: "inspect"
+  checkpoint: "last"  # Phase 1: only "last" supported
+  model_format: "hf"   # HuggingFace format
+
+  # Directory containing USER-WRITTEN evaluation tasks
+  tasks_dir: "evals/"
+
+  # List of evaluation tasks to run on each trained model
+  # Each task references a user-written Inspect AI task
+  tasks:
+    # Task 1: MMLU subset (math and physics)
+    - name: "mmlu_subset"
+      file: "mmlu_subset.py"
+      function: "mmlu_subset"
+      args:
+        subjects: ["math", "physics"]
+
+    # Task 2: Domain-specific QA
+    - name: "domain_qa"
+      file: "domain_qa.py"
+      function: "domain_qa"
+      args:
+        split: "test"
+        max_samples: 100
+
+output:
+  configs_dir: "configs/"
+  results_dir: "results/"
+  eval_results_dir: "eval_results/"
+
+# ==============================================================================
+# USAGE
+# ==============================================================================
+#
+# 1. User writes evaluation tasks (see evals/*.py)
+#
+# 2. Generate configs:
+#    $ cruijff-kit generate .
+#    Output:
+#      ✓ Generated 4 training configs (train_000.yaml to train_003.yaml)
+#      ✓ Generated 4 evaluation scripts (eval_000.py to eval_003.py)
+#      ✓ Validated all evaluation tasks
+#
+# 3. Submit training jobs to SLURM:
+#    $ sbatch scripts/train_sweep.sh
+#
+# 4. After training completes, submit evaluation jobs:
+#    $ sbatch scripts/eval_sweep.sh
+#
+# 5. Analyze results:
+#    $ python analyze_results.py eval_results/
+#
