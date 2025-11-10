@@ -9,6 +9,8 @@ description: This skill should be used when the user wants to commit their work 
 
 This skill provides a structured workflow for committing changes to git and pushing to GitHub. It ensures changes are reviewed, commit messages are meaningful and follow conventions, secrets are not committed, and commits are properly pushed to remote repositories. The skill adapts to project conventions, supporting both Conventional Commits and custom formats.
 
+**Execution Philosophy**: This skill operates autonomously - it announces what will be done and executes immediately without asking for permission. It only stops for security issues (secrets detected) or errors, never for approval.
+
 ## When to Use This Skill
 
 Use this skill when the user:
@@ -196,15 +198,19 @@ Before staging, scan for sensitive information:
    **Staging guidelines**:
    - Stage files related to this logical change
    - Do NOT stage unrelated changes (save for separate commit)
-   - If uncertain, ask user which files to include
-   - Show user which files will be staged
+   - Determine files to stage based on change analysis from Step 1
+   - Announce which files will be staged before executing
 
 2. **Verify staged changes**:
    ```bash
    git diff --staged --stat
    ```
 
-3. **Create commit** with formatted message:
+3. **Announce commit message** before creating commit:
+   - Show the user the commit message that will be used
+   - No need to wait for approval - proceed immediately
+
+4. **Create commit** with formatted message:
    ```bash
    git commit -m "$(cat <<'EOF'
    <commit message here>
@@ -216,7 +222,7 @@ Before staging, scan for sensitive information:
    )"
    ```
 
-4. **Verify commit** was created:
+5. **Verify commit** was created:
    ```bash
    git log -1 --stat
    ```
@@ -330,13 +336,12 @@ git commit -m "feat: add feature B"
 2. Analyzes: "You've added 2 files (1,200 lines) and modified 1 file (69 lines)"
 3. Categorizes: "Changes are: new feature (eval config), documentation (README)"
 4. Checks convention: Detects Conventional Commits (15/20 recent commits match)
-5. Drafts: `feat(evaluation): add Inspect AI integration to experiment framework`
-6. Scans for secrets: None detected ✓
-7. Shows proposed commit to user
-8. Stages: `git add SPEC.md appendices/F_experiment_definition.md`
-9. Commits with Conventional Commits format
-10. Pushes: `git push`
-11. Reports: "✓ 1 commit pushed to GitHub successfully"
+5. Scans for secrets: None detected ✓
+6. Announces: "Creating commit with message: `feat(evaluation): add Inspect AI integration to experiment framework`"
+7. Stages: `git add SPEC.md appendices/F_experiment_definition.md`
+8. Commits with Conventional Commits format
+9. Pushes: `git push`
+10. Reports: "✓ Commit created and pushed to GitHub successfully"
 
 ### Example 2: Custom Format Project, Secrets Detected
 
@@ -358,7 +363,8 @@ git commit -m "feat: add feature B"
 - Always run commands sequentially (staging, committing, pushing) not in parallel
 - Adapts to project conventions rather than enforcing a single standard
 - Security checks are non-negotiable - will not commit secrets
-- If uncertain about any operation, ask the user for confirmation
+- Executes autonomously after announcing actions - does not ask for permission
+- Shows transparency by explaining what will be done before doing it
 
 ## References
 
