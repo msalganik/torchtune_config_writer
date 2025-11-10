@@ -601,11 +601,71 @@ Submitted batch job 123456
 
 ---
 
-### Total Timeline: 4-6 weeks
+### Phase 4: Experiment Definition Framework (Optional)
 
+**Duration**: 2 weeks
+
+**Components**:
+1. experiment.yaml schema (simplified for Phase 1)
+   - Basic variable sweeps (lists only)
+   - Fixed controls (no variable substitution)
+   - Simple sequential naming (train_000, train_001, etc.)
+   - Evaluation configuration (optional)
+2. Basic CLI tool: `cruijff-kit generate`
+3. YAML parser and validator
+4. Cartesian product grid generation
+5. Builder API integration (map YAML params to builder methods)
+6. Evaluation script generation (Inspect AI integration)
+   - Generate Python scripts that import user-written evaluation tasks
+   - Validate task files and @task decorator presence
+   - Support task arguments from experiment.yaml
+7. run_mapping.yaml generation
+8. Basic error handling and validation
+9. Examples and documentation
+
+**Deliverables**: Declarative experiment definition layer on top of builder API, with optional evaluation support
+
+**User value**:
+- Scientists can define experiments in YAML instead of writing Python for simple sweeps
+- End-to-end workflow: training configs + evaluation scripts from single definition
+- Evaluation tasks are user-written (standard Inspect AI tasks), tool just orchestrates
+
+**Evaluation Support** (Phase 1):
+- ✅ User writes Inspect AI evaluation tasks (`evals/*.py`)
+- ✅ Tool generates eval scripts that import and run user tasks
+- ✅ Validation: task files exist, functions exist, @task decorator present
+- ✅ Support task arguments from YAML
+- ✅ HuggingFace checkpoint format (via FullModelHFCheckpointer)
+- ✅ "last" checkpoint evaluation only (Phase 1)
+
+**Deferred to Phase 5+**:
+- Variable reference syntax `{variable_name}` in paths
+- Auto-generated naming templates
+- manifest.json and experiment_summary.md generation
+- Multi-level validation (Levels 1-4)
+- Fuzzy matching for suggestions
+- Claude skill for interactive experiment design
+- Advanced sweep patterns (random search, conditional params)
+- "best" checkpoint selection for evaluation
+- Multiple checkpoint evaluation per run
+- Conditional evaluation (only top N models)
+
+**Note**: This is optional - builder API already supports all use cases. Add Phase 4 only if users want declarative alternative to Python.
+
+---
+
+### Total Timeline
+
+**Core MVP** (Phases 1-3): 4-6 weeks
 - Phase 1: 3-4 weeks
 - Phase 2: 1-2 weeks
 - Phase 3: 1-2 days
+
+**With Experiment Framework** (Phases 1-4): 6-8 weeks
+- Phases 1-3: 4-6 weeks
+- Phase 4: 2 weeks
+
+**Recommended**: Ship Phases 1-3 first, validate with users, then decide on Phase 4 based on feedback.
 
 Much faster than original 8-12 weeks by removing GPU helper complexity and using skill-based SLURM approach.
 
@@ -746,7 +806,7 @@ Detailed specifications are in separate appendices for maintainability:
   Four loading methods (torchtune shipped, file, dict, previous), source tracking, path resolution, and error handling.
 
 - **[Appendix C: High-Level Methods](appendices/C_high_level_methods.md)** ✅
-  Complete specification of all `with_*()` convenience methods. Focus on 6-7 essential methods for Phase 1.
+  Complete specification of all `with_*()` convenience methods. Focus on 9 essential methods for Phase 1.
 
 - **[Appendix D: Metadata Format](appendices/D_metadata.md)** ✅
   Metadata structure, environment tracking, data provenance, privacy considerations, and file format decisions. Focus on basic metadata for Phase 1.
@@ -754,16 +814,20 @@ Detailed specifications are in separate appendices for maintainability:
 - **[Appendix E: Testing Strategy](appendices/E_testing.md)** ✅
   Comprehensive testing approach including unit tests, integration tests, test organization, and coverage goals.
 
+- **[Appendix F: Experiment Definition Format](appendices/F_experiment_definition.md)** 🚧
+  Declarative experiment.yaml format for batch config generation (Phase 4). Includes training config generation and optional evaluation support (Inspect AI). Simplified for Phase 1: basic variable sweeps, fixed paths, sequential naming, user-written evaluation tasks. Deferred: variable substitution, naming templates, Claude skills, manifest generation, "best" checkpoint evaluation.
+
 ---
 
 ## Changes from v0.1.0
 
 **Major changes**:
 1. **Added SLURM context** - Primary use case is now SLURM-based training
-2. **Removed GPU Efficiency Helper** - Appendix F deleted, Phase 4 removed
+2. **Removed GPU Efficiency Helper** - Old Appendix F deleted, Phase 4 removed
 3. **Simplified architecture** - Single-component design (TorchtuneConfigBuilder only)
 4. **Added SLURM integration** - New section with utilities for job array generation
-5. **Reduced scope** - 5-7 weeks instead of 8-12 weeks
+5. **Added Experiment Definition Format** - New Appendix F for declarative experiment.yaml (Phase 4)
+6. **Updated timeline** - 6-8 weeks total (4-6w Phases 1-3, 2w Phase 4 optional)
 
 **Rationale**:
 - Torchtune configs already have good GPU defaults
@@ -771,6 +835,7 @@ Detailed specifications are in separate appendices for maintainability:
 - Can't iterate quickly on SLURM (queue wait times)
 - Real value is batch config generation, not GPU tuning
 - Focus on practical use case: parameter sweeps for SLURM clusters
+- Experiment.yaml provides declarative alternative to Python for simple sweeps
 
 ---
 
