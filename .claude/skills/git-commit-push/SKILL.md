@@ -9,7 +9,7 @@ description: This skill should be used when the user wants to commit their work 
 
 This skill provides a structured workflow for committing changes to git and pushing to GitHub. It ensures changes are reviewed, commit messages are meaningful and follow conventions, secrets are not committed, and commits are properly pushed to remote repositories. The skill adapts to project conventions, supporting both Conventional Commits and custom formats.
 
-**Execution Philosophy**: This skill operates autonomously - it announces what will be done and executes immediately without asking for permission. It only stops for security issues (secrets detected) or errors, never for approval.
+**Execution Philosophy**: This skill uses **contextual autonomy** - it executes immediately for safe, straightforward commits, but asks for confirmation when changes are large, complex, or potentially risky. This balances speed with safety.
 
 ## When to Use This Skill
 
@@ -153,7 +153,46 @@ and complete working examples for Phase 4 implementation.
 Co-Authored-By: Claude <noreply@anthropic.com>
 ```
 
-### Step 4: Check for Secrets
+### Step 4: Assess Commit Risk
+
+Determine whether this commit is "safe" (autonomous) or "risky" (requires confirmation):
+
+**Safe commits** (execute autonomously):
+- ≤ 5 files changed
+- ≤ 500 total lines changed
+- Not committing to main/master branch
+- All changes are related (same category from Step 1)
+- No unusual patterns (massive deletions, binary files, etc.)
+- User specified which files to commit
+
+**Risky commits** (require confirmation):
+- > 5 files changed
+- > 500 total lines changed
+- Committing to main/master branch
+- Mixed change types (features + fixes + refactoring)
+- Many untracked files (unclear what to commit)
+- Large files (> 100KB)
+- Unusual patterns detected
+
+**If risky**, show summary and ask user:
+```
+⚠️ Large/complex commit detected
+
+Files: 15 files changed (+2,500 lines, -300 lines)
+Types: Features (8 files), Documentation (5 files), Tests (2 files)
+Branch: main
+Message: "Add evaluation configuration and examples"
+
+This appears to contain multiple logical changes.
+Options:
+  [Y] Proceed with single commit
+  [n] Cancel (I'll help you split it)
+  [s] Show detailed file list
+```
+
+**If safe**, proceed autonomously to Step 5.
+
+### Step 5: Check for Secrets
 
 Before staging, scan for sensitive information:
 
@@ -188,7 +227,7 @@ Before staging, scan for sensitive information:
 5. **If no secrets detected**:
    - ✅ Proceed to staging
 
-### Step 5: Stage and Commit Changes
+### Step 6: Stage and Commit Changes
 
 1. **Stage relevant files**:
    ```bash
@@ -199,16 +238,17 @@ Before staging, scan for sensitive information:
    - Stage files related to this logical change
    - Do NOT stage unrelated changes (save for separate commit)
    - Determine files to stage based on change analysis from Step 1
-   - Announce which files will be staged before executing
+   - **If autonomous**: Announce which files are being staged
+   - **If confirmed**: User already saw file list in confirmation
 
 2. **Verify staged changes**:
    ```bash
    git diff --staged --stat
    ```
 
-3. **Announce commit message** before creating commit:
-   - Show the user the commit message that will be used
-   - No need to wait for approval - proceed immediately
+3. **Announce or show commit message**:
+   - **If autonomous**: Announce message briefly ("Committing: 'Add feature X'")
+   - **If confirmed**: User already saw message in confirmation
 
 4. **Create commit** with formatted message:
    ```bash
@@ -227,7 +267,7 @@ Before staging, scan for sensitive information:
    git log -1 --stat
    ```
 
-### Step 6: Push to Remote
+### Step 7: Push to Remote
 
 1. **Check remote status**:
    ```bash
@@ -333,17 +373,42 @@ git commit -m "feat: add feature B"
 
 **Assistant**:
 1. Runs `git status` and `git diff --stat`
-2. Analyzes: "You've added 2 files (1,200 lines) and modified 1 file (69 lines)"
-3. Categorizes: "Changes are: new feature (eval config), documentation (README)"
-4. Checks convention: Detects Conventional Commits (15/20 recent commits match)
-5. Scans for secrets: None detected ✓
-6. Announces: "Creating commit with message: `feat(evaluation): add Inspect AI integration to experiment framework`"
-7. Stages: `git add SPEC.md appendices/F_experiment_definition.md`
-8. Commits with Conventional Commits format
-9. Pushes: `git push`
-10. Reports: "✓ Commit created and pushed to GitHub successfully"
+2. Analyzes: "2 files changed (+1,269 lines)"
+3. Categorizes: "New feature (eval config), documentation"
+4. Risk assessment: ✅ Safe (2 files, 1,269 lines, feature branch)
+5. Checks convention: Detects Conventional Commits (15/20 matches)
+6. Scans for secrets: ✅ None detected
+7. Announces: "Committing: `feat(evaluation): add Inspect AI integration`"
+8. Executes: `git add`, `git commit`, `git push`
+9. Reports: "✓ Committed 795efaf and pushed to GitHub"
 
-### Example 2: Custom Format Project, Secrets Detected
+### Example 2: Large Commit Requiring Confirmation
+
+**User**: "commit my changes"
+
+**Assistant**:
+1. Analyzes: "15 files changed (+2,847 lines, -156 lines)"
+2. Categorizes: "Features (8 files), docs (5 files), tests (2 files)"
+3. Risk assessment: ⚠️ **Risky** (>5 files, >500 lines, mixed types)
+4. Scans for secrets: ✅ None detected
+5. Shows confirmation:
+   ```
+   ⚠️ Large commit with mixed changes detected
+
+   Files: 15 (+2,847 lines, -156 lines)
+   Categories: Features (8), Documentation (5), Tests (2)
+   Message: "Add evaluation framework with examples and tests"
+
+   Consider splitting into:
+   - Commit 1: Core evaluation framework (8 files)
+   - Commit 2: Documentation (5 files)
+   - Commit 3: Tests (2 files)
+
+   Proceed with single commit? [Y/n/split]
+   ```
+6. **Waits** for user response
+
+### Example 3: Secrets Detected (Always Blocks)
 
 **User**: "commit my changes"
 
@@ -353,8 +418,7 @@ git commit -m "feat: add feature B"
 3. **STOPS**: "⚠️ Security Warning: Detected potential API key in config.py"
 4. Shows matched line: `api_key = "sk_live_..."`
 5. Advises: "Please use environment variables instead: `api_key = os.getenv('API_KEY')`"
-6. Asks: "Would you like to remove the secret before committing?"
-7. **Does not proceed** until user confirms secrets are removed
+6. **Does not proceed** until user confirms secrets are removed
 
 ## Notes
 
@@ -362,9 +426,9 @@ git commit -m "feat: add feature B"
 - Commit message format includes Claude Code attribution as per project conventions
 - Always run commands sequentially (staging, committing, pushing) not in parallel
 - Adapts to project conventions rather than enforcing a single standard
-- Security checks are non-negotiable - will not commit secrets
-- Executes autonomously after announcing actions - does not ask for permission
-- Shows transparency by explaining what will be done before doing it
+- Uses **contextual autonomy**: executes immediately for safe commits, confirms for risky ones
+- Security checks are non-negotiable - always blocks on secrets
+- Thresholds: Safe ≤ 5 files, ≤ 500 lines, not main/master, single change type
 
 ## References
 
