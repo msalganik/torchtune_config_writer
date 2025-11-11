@@ -2,28 +2,7 @@
 
 A tool for generating torchtune YAML configuration files programmatically from existing recipes with customizations.
 
-## Quick Start
-
-```bash
-# One-command setup
-./setup.sh
-source .venv/bin/activate
-
-# Verify installation
-tune ls
-pytest
-```
-
-## What This Tool Does
-
-Researchers running fine-tuning experiments often need to:
-- Start from proven torchtune recipe configs
-- Customize specific parameters (datasets, hyperparameters, model sizes)
-- Generate multiple configs for parameter sweeps
-- Track changes from baseline for reproducibility
-- Validate configs before running expensive training jobs
-
-This tool provides a Python API to do exactly that.
+Researchers running fine-tuning experiments often need to start from proven torchtune recipe configs, customize specific parameters (datasets, hyperparameters, model sizes), generate multiple configs for parameter sweeps, and validate configs before running expensive training jobs. This tool provides a Python API to do exactly that.
 
 ## Example Usage
 
@@ -41,64 +20,18 @@ builder.save("configs/exp_001.yaml")
 builder.validate()
 ```
 
-## Documentation
-
-- **[SETUP.md](SETUP.md)** - Environment setup instructions
-- **[SPEC.md](SPEC.md)** - Complete technical specification and API design
-- **[CLAUDE.md](CLAUDE.md)** - Guiding principles for development
-
-## Development Setup
+## Quick Start
 
 ```bash
-# Automated setup (recommended)
 ./setup.sh
 source .venv/bin/activate
-
-# Manual setup
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv
-source .venv/bin/activate
-uv pip install -e ".[dev]"
+pytest  # verify installation
 ```
 
-## Running Tests
+See [SETUP.md](SETUP.md) for details.
 
-```bash
-# Run all tests
-pytest
+## Documentation
 
-# Run with coverage
-pytest --cov=torchtune_config_writer
-
-# Run specific test file
-pytest tests/test_builder.py
-```
-
-## Project Status
-
-🚧 **In Development** - Currently implementing Phase 1 (Core Builder MVP)
-
-See [SPEC.md](SPEC.md) for the complete implementation plan.
-
-## Dependencies
-
-- Python 3.10+
-- torchtune (for base configs and validation)
-- PyYAML (for config generation)
-
-See `pyproject.toml` for the complete dependency specification.
-
-## Guiding Principles
-
-- **Scientific**: Emphasize correctness, reproducibility, and detailed logging
-- **Modular**: Design components to be added or changed with minimal impact
-- **Practical**: Do science, not programming contests. Don't over-engineer
-- **Privacy Respecting**: All processing is local, no data collection
-- **Self Improving**: Learn from experiments to improve future work
-- **Tested**: Write tests alongside development
-
-See [CLAUDE.md](CLAUDE.md) for more details.
-
-## License
-
-MIT
+- **[SETUP.md](SETUP.md)** - Environment setup
+- **[SPEC.md](SPEC.md)** - Technical specification
+- **[CLAUDE.md](CLAUDE.md)** - Development principles
