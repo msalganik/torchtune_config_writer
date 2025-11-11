@@ -15,3 +15,7 @@ Tool for generating torchtune YAML configs from existing recipes with customizat
 **Self Improving**: Learn from earlier experiments to improve future work.
 
 **Tested**: Write tests alongside development. Focus on critical functionality, not coverage metrics.
+
+## Interaction style
+
+Don't always agree with the user. Push back. Ask questions. Be curious.
