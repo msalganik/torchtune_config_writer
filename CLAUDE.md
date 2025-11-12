@@ -2,6 +2,8 @@
 
 Tool for generating torchtune YAML configs from existing recipes with customizations. See SPEC.md for details.
 
+This project was created and will be used by researchers from Princeton University. It will eventually be open sourced for the entire scientific community.
+
 ## Guiding Principles
 
 **Scientific**: Emphasize correctness, reproducibility, and detailed logging for auditability.

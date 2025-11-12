@@ -39,15 +39,112 @@ Generates 4 complete torchtune configs, ready to submit to SLURM.
 
 ## Table of Contents
 
-1. [Project Goal](#project-goal)
-2. [Core Concept](#core-concept)
-3. [Design Decisions](#design-decisions)
-4. [Architecture](#architecture)
-5. [Phase 1 Scope](#phase-1-scope)
-6. [Usage](#usage)
-7. [Implementation Plan](#implementation-plan)
-8. [File Structure](#file-structure)
-9. [Appendices](#appendices)
+1. [System Context](#system-context)
+2. [Project Goal](#project-goal)
+3. [Core Concept](#core-concept)
+4. [Design Decisions](#design-decisions)
+5. [Architecture](#architecture)
+6. [Phase 1 Scope](#phase-1-scope)
+7. [Usage](#usage)
+8. [Implementation Plan](#implementation-plan)
+9. [File Structure](#file-structure)
+10. [Appendices](#appendices)
+
+---
+
+## System Context
+
+### Part of cruijff_kit v2
+
+This component is being designed for integration into **cruijff_kit v2**, a research experiment orchestration system for LLM fine-tuning and evaluation.
+
+**cruijff_kit v2 Components:**
+- **torchtune config generation** (this component) - ✅ Being spec'd
+- **Inspect AI evaluation** - 🚧 Future
+- **DSPy optimization** - 🚧 Future
+- **SLURM orchestration** - 🚧 Future
+
+### Future Architecture Decisions (Non-Blocking for Phase 1)
+
+**NOTE: These are future considerations for cruijff_kit v2 integration.
+They do NOT block Phase 1 implementation, which is fully standalone.**
+
+The following architectural decisions for cruijff_kit v2 integration are still being determined:
+
+- [ ] **Monorepo structure**: Final organization of components
+- [ ] **Command interface**: `cruijff-kit torchtune generate` vs other patterns
+- [ ] **Component communication**: File-based, API-based, or hybrid
+- [ ] **experiment.yaml schema**: Unified format across all frameworks
+
+### Phase 1 Approach: Standalone-Capable, Integration-Ready
+
+This component is being spec'd to be:
+
+**Standalone-capable:**
+- Can be used independently: `cruijff-kit torchtune generate experiment.yaml`
+- Has both CLI and Python API
+- Works without other cruijff_kit components
+- Useful for development and testing
+
+**Integration-ready:**
+- Will be integrated as `cruijff_kit.torchtune` in monorepo
+- Can be called by cruijff_kit orchestrator
+- Can be called by Claude Code skills
+- Designed for loose coupling with other components
+
+### Usage Modes
+
+**Mode 1: Manual (Human researchers)**
+```bash
+# Researcher writes experiment.yaml manually
+vim experiment.yaml
+
+# Researcher runs generation
+cruijff-kit torchtune generate experiment.yaml
+
+# Researcher submits to SLURM manually
+sbatch submit_script.sh
+```
+
+**Mode 2: Skills (Claude Code automation)**
+```python
+# Skills can use CLI
+subprocess.run(["cruijff-kit", "torchtune", "generate", "experiment.yaml"])
+
+# Or import API
+from cruijff_kit.torchtune import generate_configs
+result = generate_configs("experiment.yaml")
+```
+
+**Mode 3: Integrated (cruijff_kit orchestrator)**
+```python
+# Called by main orchestrator
+from cruijff_kit.torchtune import generate_configs
+result = generate_configs(experiment_dict)
+# Orchestrator uses result to coordinate with other components
+```
+
+### Integration Points
+
+**This component provides:**
+- Input: `experiment.yaml` (or dict)
+- Output: Generated torchtune config files in `configs/` directory
+- Output: `run_mapping.yaml` mapping run IDs to parameters
+- API: `generate_configs()` function returning structured results
+
+**This component depends on:**
+- `torchtune` CLI (for `tune cp` to load base configs)
+- Optional: `torchtune` CLI (for `tune validate` to validate generated configs)
+
+**This component will be used by:**
+- SLURM orchestration component (reads `run_mapping.yaml` to submit jobs)
+- Evaluation component (reads `run_mapping.yaml` to map checkpoints to parameters)
+- Claude Code skills (calls CLI or API)
+
+### See Also
+
+- [CRUIJFF_KIT_V1_SUMMARY.md](CRUIJFF_KIT_V1_SUMMARY.md) - Analysis of v1 architecture
+- [REFACTORING_PLAN.md](REFACTORING_PLAN.md) - Migration rationale from v1 to v2
 
 ---
 
@@ -105,11 +202,14 @@ Tool generates cartesian product → N complete torchtune configs.
 
 **Implementation**:
 ```yaml
-# Option 1: Use torchtune recipe
+# Option 1: Use torchtune recipe (run 'tune ls' to see available configs)
 base_config: "llama3_2/1B_lora_single_device"
 
 # Option 2: Use custom file
 base_config_file: "/path/to/my_custom_config.yaml"
+
+# Note: Only ONE of base_config or base_config_file can be specified.
+# Specifying both will raise a ValidationError.
 ```
 
 Tool loads base, then applies overrides.
@@ -145,18 +245,63 @@ See [Appendix A](appendices/A_merge_semantics.md) for complete merge rules.
 
 ### 4. Validation Strategy
 
-**Decision**: Use `tune validate` for generated configs (optional but recommended)
+**Decision**: Two-stage validation using minimal pre-checks and torchtune's validator
+
+**Stage 1 - Pre-generation (our tool):**
+- Validate experiment.yaml against schema
+- Verify base_config exists (via `tune cp` test)
+- Check variables have non-empty value lists
+- Ensure no duplicate variable names
+
+**Stage 2 - Post-generation (tune validate):**
+- Run `tune validate` on each generated config
+- Leverage torchtune's comprehensive validation:
+  - YAML syntax validity
+  - Component existence (`_component_` paths resolve)
+  - Required parameters present
+  - No unexpected parameters
+  - Type compatibility via Python signature binding
 
 **Rationale**:
-- Authoritative validation from torchtune itself
-- Catches component instantiation errors
+- Don't reinvent the wheel - `tune validate` is authoritative
 - **Critical for SLURM**: Find config errors before queue submission
+- Our minimal pre-checks prevent wasted generation time
 
-**Implementation**: After generating all configs, optionally run `tune validate` on each.
+**Implementation**: After generating all configs, run `tune validate` on each. Continue validating all configs even if one fails, then report summary.
 
 ---
 
-### 5. No Builder API in Phase 1
+### 5. Error Handling Strategy
+
+**Decision**: Clear error hierarchy with actionable messages
+
+**Error Classes:**
+```python
+ConfigWriterError (base)
+├── ValidationError
+│   ├── BaseConfigNotFoundError    # base_config doesn't exist
+│   ├── ExperimentSchemaError      # experiment.yaml invalid
+│   └── EmptyVariableError         # variable has no values
+├── MergeError
+│   └── TypeMismatchError          # incompatible types in merge
+└── TorchtuneValidationError       # tune validate failed
+```
+
+**Philosophy:**
+- Fail fast with clear, actionable error messages
+- Include context (which variable, which line, suggested fix)
+- Example:
+  ```
+  BaseConfigNotFoundError: Config 'llama3/invalid' not found.
+    Available configs starting with 'llama3':
+      - llama3/8B_full_single_device
+      - llama3/8B_lora_single_device
+    Run 'tune ls' for full list.
+  ```
+
+---
+
+### 6. No Builder API in Phase 1
 
 **Decision**: Phase 1 is YAML → configs only, no Python fluent API
 
@@ -247,9 +392,10 @@ experiment.yaml
 ✅ **Validation**
 - Pydantic schema validation
 - Required field checking
+- Framework must be "torchtune" (errors on other values in Phase 1)
 - Type checking (lists contain valid values)
-- Base config exists
-- Optional: `tune validate` on generated configs
+- Base config exists (via `tune cp` test)
+- Post-generation: `tune validate` on all generated configs
 
 ✅ **CLI**
 - `python -m torchtune_config_writer generate experiment.yaml`
@@ -258,6 +404,7 @@ experiment.yaml
 ✅ **Output**
 - One torchtune YAML per variable combination
 - run_mapping.yaml for traceability
+- Organized folder structure for multiple experiments
 
 ✅ **Testing**
 - Unit tests for merge logic
@@ -266,7 +413,7 @@ experiment.yaml
 
 ### Deferred to Phase 2+
 
-❌ Python fluent/builder API (can add if needed)
+❌ Python API (programmatic access)
 ❌ Variable substitution in paths (`{lora_rank}`)
 ❌ Metadata tracking (.meta.yaml files)
 ❌ Multiple loading methods
@@ -337,6 +484,48 @@ controls:
 ```
 
 Tool loads your custom config, applies overrides.
+
+---
+
+## Output Folder Structure
+
+**Decision**: Experiment name + timestamp pattern for unique, organized outputs
+
+**Structure:**
+```
+outputs/
+├── lora_rank_sweep_20250112_143022/
+│   ├── experiment.yaml          # Copy of source for reproducibility
+│   ├── configs/
+│   │   ├── run_000.yaml         # Generated torchtune configs
+│   │   ├── run_001.yaml
+│   │   ├── run_002.yaml
+│   │   └── run_003.yaml
+│   ├── run_mapping.yaml         # Maps run_XXX to variable values
+│   └── validation_report.txt    # Results of tune validate
+```
+
+**Key Features:**
+- **Unique folders**: Timestamp prevents collisions
+- **Self-contained**: Everything for one experiment in one folder
+- **Reproducible**: Original experiment.yaml preserved
+- **Traceable**: Clear naming shows what and when
+
+**Output Path Resolution:**
+1. Command line `--output-dir` (highest priority)
+2. experiment.yaml `output.experiment_dir` field
+3. Auto-generated: `outputs/{experiment_name}_{timestamp}/`
+
+**Example:**
+```bash
+# Auto-generated unique folder
+$ python torchtune_config_writer.py experiment.yaml
+Created: outputs/lora_rank_sweep_20250112_143022/
+
+# User-specified folder
+$ python torchtune_config_writer.py experiment.yaml --output-dir my_results/exp1
+Created: my_results/exp1/
+```
 
 ---
 

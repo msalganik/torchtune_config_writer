@@ -9,6 +9,8 @@
 ## Overview
 
 Scientists define experiments by specifying:
+- **Experiment metadata**: Name, research question, researcher info
+- **Framework**: Which tool to use (torchtune, inspect, dspy)
 - **Variables**: Parameters to sweep (independent variables)
 - **Controls**: Parameters held constant (controlled variables)
 - **Base config**: Starting point (torchtune recipe or custom file)
@@ -17,8 +19,14 @@ The tool generates one complete torchtune config per variable combination.
 
 **Example:**
 ```yaml
-experiment_name: lora_rank_study
-base_config: llama3_2/1B_lora_single_device
+experiment:
+  name: lora_rank_study
+  framework: torchtune
+  question: "How does LoRA rank affect model performance?"
+  researcher: "Alice"
+
+framework_config:
+  base_config: llama3_2/1B_lora_single_device
 
 variables:
   lora_rank: [8, 16, 32, 64]
@@ -38,25 +46,39 @@ Generates 4 configs: one for each `lora_rank` value, all with the same `learning
 ### Required Fields
 
 ```yaml
-experiment_name: "my_experiment"  # REQUIRED: Unique identifier
+experiment:
+  name: "my_experiment"           # REQUIRED: Unique identifier
+  framework: "torchtune"          # REQUIRED: Framework (torchtune, inspect, dspy)
+  question: "Research question"   # Optional: What you're testing
+  hypothesis: "Expected outcome"  # Optional: What you expect
+  researcher: "Name"              # Optional: Who's running this
+  date: "2025-11-12"             # Optional: When designed
+  tags: ["lora", "llama3"]       # Optional: For organization
 
-# REQUIRED: Exactly one of these
-base_config: "llama3_2/1B_lora_single_device"  # Torchtune recipe name
-# OR
-base_config_file: "/path/to/custom_config.yaml"  # Path to custom config
+framework_config:
+  # REQUIRED: Exactly one of these
+  base_config: "llama3_2/1B_lora_single_device"  # Torchtune recipe name
+  # OR
+  base_config_file: "/path/to/custom_config.yaml"  # Path to custom config
 ```
 
-**Base Config Options:**
+**Experiment Section:**
+- **name**: Required. Unique identifier for this experiment
+- **framework**: Required. Must be "torchtune" in Phase 1 (will error if set to "inspect", "dspy", or other values). Multi-framework support planned for cruijff_kit v2.
+- **question, hypothesis, researcher, date, tags**: Optional metadata for tracking and organization
+
+**Framework Config Section:**
 
 1. **`base_config`**: Use torchtune's built-in recipe
    - Value: Recipe name from `tune ls` (e.g., `"llama3_2/1B_lora_single_device"`)
+   - Run `tune ls` to see all available configs
    - Tool uses `tune cp` to get the base config
 
 2. **`base_config_file`**: Use your own custom config file
    - Value: Absolute path to a YAML config file
    - Useful when you've already adapted a config for your GPU/cluster
 
-**You must specify exactly one.** If both are present, `base_config_file` takes precedence.
+**You must specify exactly one.** Specifying both will raise a ValidationError.
 
 ---
 
@@ -72,6 +94,7 @@ variables:
 - Generates **full factorial grid** (cartesian product)
 - Example above: 4 × 2 = 8 configs
 - Each parameter can be a list of: numbers, strings, booleans
+- If variables section is empty or omitted: generates single config with just base + controls
 
 **Supported parameters:** Any valid torchtune config parameter. Common examples:
 - `lora_rank`, `lora_alpha`
@@ -127,11 +150,23 @@ controls:
 
 ```yaml
 output:
-  configs_dir: "configs/"     # Default: "./configs/"
-  results_dir: "results/"     # Default: "./results/"
+  experiment_name: "my_experiment"  # Optional: used in folder name
+  base_dir: "./outputs"             # Optional: base output directory
 ```
 
-All fields optional. Defaults work for most cases.
+All fields optional. The tool creates a unique folder structure:
+```
+outputs/
+├── my_experiment_20250112_143022/
+│   ├── experiment.yaml      # Copy of source for reproducibility
+│   ├── configs/
+│   │   ├── run_000.yaml    # Generated configs
+│   │   └── ...
+│   ├── run_mapping.yaml    # Maps run IDs to variable values
+│   └── validation_report.txt  # tune validate results
+```
+
+Each experiment gets a unique timestamped folder to prevent collisions.
 
 ---
 
@@ -140,8 +175,14 @@ All fields optional. Defaults work for most cases.
 ### Example 1: Single Variable Sweep (Torchtune Base)
 
 ```yaml
-experiment_name: lora_rank_study
-base_config: llama3_2/1B_lora_single_device
+experiment:
+  name: lora_rank_study
+  framework: torchtune
+  question: "How does LoRA rank affect model performance?"
+  researcher: "Alice"
+
+framework_config:
+  base_config: llama3_2/1B_lora_single_device
 
 variables:
   lora_rank: [8, 16, 32, 64]
@@ -164,8 +205,13 @@ controls:
 ### Example 2: Two-Variable Grid (Custom Base Config)
 
 ```yaml
-experiment_name: lr_batch_sweep
-base_config_file: /home/user/configs/my_gpu_optimized.yaml
+experiment:
+  name: lr_batch_sweep
+  framework: torchtune
+  question: "What's the optimal learning rate and batch size combination?"
+
+framework_config:
+  base_config_file: /home/user/configs/my_gpu_optimized.yaml
 
 variables:
   learning_rate: [1e-4, 3e-4, 5e-4]
@@ -183,8 +229,15 @@ controls:
 ### Example 3: With W&B Logging
 
 ```yaml
-experiment_name: cap_viz_test
-base_config: llama3_2/1B_lora_single_device
+experiment:
+  name: cap_viz_test
+  framework: torchtune
+  question: "Does capitalization pattern generalize across word lengths?"
+  researcher: "Bob"
+  tags: ["capitalization", "generalization"]
+
+framework_config:
+  base_config: llama3_2/1B_lora_single_device
 
 variables:
   lora_rank: [8, 16]
@@ -278,11 +331,11 @@ See torchtune's config examples for full parameter reference.
 ## Validation
 
 The tool validates:
-- ✓ Exactly one of `base_config` or `base_config_file` specified
-- ✓ Base config exists (torchtune recipe or file path)
-- ✓ Variables section not empty
+- ✓ Exactly one of `base_config` or `base_config_file` specified (error if both)
+- ✓ Base config exists (validates with `tune cp` test)
+- ✓ Framework must be "torchtune" in Phase 1
 - ✓ YAML syntax valid
-- ✓ Generated configs can be validated with `tune validate` (optional)
+- ✓ Generated configs validated with `tune validate` (post-generation)
 
 ---
 
