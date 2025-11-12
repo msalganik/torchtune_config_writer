@@ -1,0 +1,78 @@
+# Simple LoRA Rank Sweep Example
+# Phase 1: Torchtune config generation only
+
+experiment:
+  name: simple_lora_rank_sweep
+  framework: torchtune  # Must be "torchtune" in Phase 1 (errors on other values)
+  question: "How does LoRA rank affect model performance on our dataset?"
+  researcher: "Alice"
+  date: "2025-11-12"
+  tags: ["lora", "llama3", "rank_study"]
+
+framework_config:
+  # Use a torchtune recipe - run 'tune ls' to see all available configs
+  # This name comes from the CONFIG column (right column) of 'tune ls' output
+  base_config: llama3_2/1B_lora_single_device
+
+  # Alternative: Use your own custom config file
+  # base_config_file: /path/to/my_custom_config.yaml
+  # NOTE: Only ONE of base_config or base_config_file can be specified
+
+variables:
+  # Sweep over 4 LoRA rank values - generates 4 configs
+  lora_rank: [8, 16, 32, 64]
+  # Note: Empty variables section would generate single config with base + controls
+
+controls:
+  # Fixed hyperparameters
+  learning_rate: 3e-4
+  lora_alpha: 16
+  epochs: 3
+  batch_size: 4
+  seed: 42
+
+  # Dataset configuration
+  dataset:
+    _component_: torchtune.datasets.instruct_dataset
+    source: json
+    data_files: /path/to/your/data.json
+    field: train
+    packed: true
+
+  # Output configuration
+  output_dir: /path/to/output/lora_rank_sweep
+
+  # Logging
+  metric_logger:
+    _component_: torchtune.training.metric_logging.WandBLogger
+    project: lora_rank_study
+    mode: offline
+
+# ============================================================================
+# USAGE
+# ============================================================================
+#
+# 1. Edit paths above (data_files, output_dir) for your environment
+#
+# 2. Generate configs:
+#    $ python -m torchtune_config_writer generate experiment.yaml
+#
+#    Output:
+#      ✓ Created output directory: outputs/simple_lora_rank_sweep_20250112_143022/
+#      ✓ Loaded base config: llama3_2/1B_lora_single_device
+#      ✓ Generated 4 configs in outputs/simple_lora_rank_sweep_20250112_143022/configs/
+#        - run_000.yaml (lora_rank=8)
+#        - run_001.yaml (lora_rank=16)
+#        - run_002.yaml (lora_rank=32)
+#        - run_003.yaml (lora_rank=64)
+#      ✓ Created run_mapping.yaml
+#      ✓ Validated 4/4 configs successfully
+#
+# 3. Navigate to output directory:
+#    $ cd outputs/simple_lora_rank_sweep_20250112_143022/
+#
+# 4. Submit to SLURM:
+#    $ sbatch --array=0-3 submit_array.sh
+#    Or submit individually:
+#    $ tune run lora_finetune_single_device --config configs/run_000.yaml
+#

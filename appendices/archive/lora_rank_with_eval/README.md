@@ -41,7 +41,7 @@ As a user, you write:
 
 ## What the TOOL Generates
 
-When you run `cruijff-kit generate .`, the tool generates:
+When you run `cruijff-kit torchtune generate experiment.yaml`, the tool generates:
 
 ```
 lora_rank_with_eval/
@@ -127,13 +127,12 @@ def domain_qa(split="test"):
 ### Step 4: Generate Configs
 
 ```bash
-# Generate all training configs and evaluation scripts
-cruijff-kit generate .
+# Generate all training configs
+cruijff-kit torchtune generate experiment.yaml
 
 # Output:
-#   ✓ Generated 4 training configs (train_000.yaml to train_003.yaml)
-#   ✓ Generated 4 evaluation scripts (eval_000.py to eval_003.py)
-#   ✓ Validated all evaluation tasks
+#   ✓ Generated 4 training configs (run_000.yaml to run_003.yaml)
+#   ✓ Created run_mapping.yaml
 ```
 
 ### Step 5: Run Training

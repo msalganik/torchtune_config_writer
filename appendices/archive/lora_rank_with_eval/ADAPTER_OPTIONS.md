@@ -258,7 +258,7 @@ eval(tasks, model=PeftModelAPI("meta-llama/Llama-3.1-8B", "results/run_000/adapt
 
 ## Tool Support
 
-The `cruijff-kit generate` tool will support both options:
+The `cruijff-kit torchtune generate` tool will support both options:
 
 ### Full Model (Default)
 

@@ -85,7 +85,7 @@ output:
 # 1. User writes evaluation tasks (see evals/*.py)
 #
 # 2. Generate configs:
-#    $ cruijff-kit generate .
+#    $ cruijff-kit torchtune generate experiment.yaml
 #    Output:
 #      ✓ Generated 4 training configs (train_000.yaml to train_003.yaml)
 #      ✓ Generated 4 evaluation scripts (eval_000.py to eval_003.py)
